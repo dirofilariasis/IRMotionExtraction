@@ -5,48 +5,28 @@ import json
 import os
 import argparse
 from typing import NamedTuple
+from pathlib import Path
+import ConfigDb 
+
 
 import cv2
 import numpy as np
 
 threshold = 0
 
+config = ConfigDb.get_instance()
+config.create_value("verbose", False)
+
+
+def verbose_callback(key, value):
+    if key == "verbose":
+        print(f"Verbose mode changed to: {value}")  
+
 class Frames(NamedTuple):
     frame: np.ndarray
     grey: np.ndarray
     diffrence: np.ndarray
     threshold: np.ndarray
-
-
-def load_config(path):
-    if not path or not os.path.exists(path):
-        return {}
-
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-    return {
-        "input": data.get("input"),
-        "output": data.get("output"),
-        "verbose": bool(data.get("verbose", False)),
-    }
-
-
-def save_config(path, args):
-    data = {
-        "input": args.input,
-        "output": args.output,
-        "verbose": bool(args.verbose),
-    }
-
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-
-    return data
-
 
 def extract_motion_fd(video_path, outfile):
     cap = cv2.VideoCapture(video_path)
@@ -111,6 +91,9 @@ def main(input_path, outfile, options):
 
 
 if __name__ == "__main__":
+    current_dir = os.getcwd()
+    print(current_dir)
+
     parser = argparse.ArgumentParser(
         prog="MotionExtraction",
         description="Identifies motion occurring in the video",
@@ -134,22 +117,47 @@ if __name__ == "__main__":
         action="store_true",
         help="Verbose output",
     )
-
-    # Load config file first
-    options = {}
-    if "--config" in sys.argv:
-        # a simple way to read the value before parse
-        raw = sys.argv[sys.argv.index("--config") + 1] if "--config" in sys.argv and sys.argv.index("--config") + 1 < len(sys.argv) else None
-        if raw:
-            options = load_config(raw)
-    else:
-        options = load_config("./configs/defaults.json")
-
+   
+    configPath = current_dir + "/motion_extraction/config.json"
     parser.set_defaults(**options)
+
     args = parser.parse_args()
+    saveConfig = False
 
-    # Save config after parsing, if the user supplied one
-    if args.config:
-        save_config(args.config, args)
+    config.register_callback("verbose", verbose_callback)
 
-    main(args.input, args.output, options)
+    # Set some defaults 
+    config.create_value("input", 0) # camera or video file input
+    config.create_value("verbose", False) # extra debugging output
+    # where to save video output
+    video_output_path = current_dir + "/motion_extraction/output.avi"
+    config.create_value("output", video_output_path)
+    config.create_value("configPath", None)
+    config.create_value("saveConfig", False)
+
+    if args.config != None:
+        configPath = args.config
+        config.load_from_json(configPath)
+        config.create_value("configPath", configPath)
+        config.create_value("saveConfig", True)
+    else:
+        # collect arguments and update the config file
+        if args.input != None and args.input != options["input"]:
+            config.update_value("input", args.input)
+            config.update_value("saveConfig", True)
+        if args.output != None and args.output != options["output"]:
+            options["output"] = args.output
+            config.update_value("output", args.output)
+            config.update_value("saveConfig", True)
+        if args.verbose != options["verbose"]:
+            options["verbose"] = args.verbose
+            config.update_value("verbose", args.output)
+            config.update_value("saveConfig", True)
+        # Save config after parsing, if the user supplied one
+   
+    if saveConfig:
+        config.save_to_json(configPath)
+
+    main(options["input"], options["output"], options)
+
+
